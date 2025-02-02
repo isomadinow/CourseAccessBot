@@ -2,7 +2,6 @@
 using CourseAccessBot.Repositories;
 using Telegram.Bot;
 using Telegram.Bot.Types;
-using Telegram.Bot.Types.Enums;
 using Telegram.Bot.Types.ReplyMarkups;
 
 namespace CourseAccessBot.Services;
@@ -117,77 +116,13 @@ public class UserHandlers
                         $"✅ Вы выбрали курс: *{course.Title}*\n" +
                         $"💰 Цена: *{course.Price} руб.*\n\n" +
                         "📩 Для оплаты отправьте чек (фото или PDF) в этот чат.",
-                        parseMode: ParseMode.Markdown);
+                        parseMode: Telegram.Bot.Types.Enums.ParseMode.Markdown);
 
                     // Добавляем кнопку "🔙 Вернуться в меню"
                     await ShowReturnToMenuButton(chatId);
                 }
             }
         }
-    }
-
-    /// <summary>
-    /// Обработка отправленных файлов (фото и PDF).
-    /// </summary>
-    public async Task HandleUserFileMessage(Message message)
-    {
-        var chatId = message.Chat.Id;
-        var userId = message.From!.Id;
-
-        if (!_userSelectedCourse.ContainsKey(userId))
-        {
-            await _botClient.SendTextMessageAsync(chatId, "❌ Вы не выбрали курс. Сначала выберите курс из списка.");
-            return;
-        }
-
-        var courseId = _userSelectedCourse[userId];
-        var course = _courseRepo.GetCourseById(courseId);
-
-        if (course == null)
-        {
-            await _botClient.SendTextMessageAsync(chatId, "❌ Курс не найден. Попробуйте выбрать курс заново.");
-            return;
-        }
-
-        string? fileId = null;
-
-        if (message.Type == MessageType.Photo)
-        {
-            var photo = message.Photo?.LastOrDefault();
-            if (photo != null)
-            {
-                fileId = photo.FileId;
-            }
-        }
-        else if (message.Type == MessageType.Document && message.Document!.MimeType == "application/pdf")
-        {
-            fileId = message.Document.FileId;
-        }
-
-        if (fileId == null)
-        {
-            await _botClient.SendTextMessageAsync(chatId, "❌ Неверный формат файла. Пришлите фото или PDF.");
-            return;
-        }
-
-        // Определяем, что отправлять: username, имя/фамилию или ID
-        string userIdentifier = message.From.Username != null
-            ? $"@{message.From.Username}"
-            : (!string.IsNullOrEmpty(message.From.FirstName) || !string.IsNullOrEmpty(message.From.LastName))
-                ? $"{message.From.FirstName} {message.From.LastName}".Trim()
-                : $"ID: {userId}";
-
-        // Отправляем файл админам
-        foreach (var adminId in AdminHandlers.GetAdminIds())
-        {
-            await _botClient.SendDocumentAsync(
-                chatId: adminId,
-                document: new InputFileId(fileId),
-                caption: $"💳 Новый чек от {userIdentifier} за курс \"{course.Title}\"."
-            );
-        }
-
-        await _botClient.SendTextMessageAsync(chatId, "✅ Ваш файл был успешно отправлен на проверку.");
     }
 
     /// <summary>
