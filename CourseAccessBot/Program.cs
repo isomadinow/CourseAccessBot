@@ -3,8 +3,12 @@ using CourseAccessBot.Services;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using System;
 using System.IO;
+using System.Linq;
+using System.Collections.Generic;
 using Telegram.Bot;
+using DotNetEnv;
 
 namespace CourseAccessBot
 {
@@ -12,38 +16,56 @@ namespace CourseAccessBot
     {
         public static void Main(string[] args)
         {
-            // Создаём и запускаем хост
-            CreateHostBuilder(args).Build().Run();
+            // Определяем путь к .env и appsettings.json (3 уровня вверх)
+            string basePath = GetBasePath();
+
+            // Загружаем переменные из .env
+            string envFilePath = Path.Combine(basePath, ".env");
+            if (File.Exists(envFilePath))
+            {
+                Env.Load(envFilePath);
+                Console.WriteLine("✅ Загружены переменные из .env");
+            }
+            else
+            {
+                throw new Exception($"❌ Ошибка: Файл .env не найден по пути {envFilePath}!");
+            }
+
+            // Запускаем приложение
+            CreateHostBuilder(args, basePath).Build().Run();
         }
 
-        private static IHostBuilder CreateHostBuilder(string[] args) =>
+        private static IHostBuilder CreateHostBuilder(string[] args, string basePath) =>
             Host.CreateDefaultBuilder(args)
                 .ConfigureAppConfiguration((hostingContext, config) =>
                 {
-                    string basePath = GetBasePath(); // Получаем базовый путь (4 уровня вверх)
-                    config.SetBasePath(basePath)
-                          .AddJsonFile("appsettings.json", optional: false, reloadOnChange: true)
+                    config.SetBasePath(basePath) // Устанавливаем базовый путь
+                          .AddJsonFile("appsettings.json", optional: false, reloadOnChange: true) // Подключаем appsettings.json
                           .AddEnvironmentVariables();
                 })
                 .ConfigureServices((hostingContext, services) =>
                 {
                     var configuration = hostingContext.Configuration;
 
-                    // Читаем конфигурацию
-                    var botToken = configuration["BotConfiguration:BotToken"];
+                    // Читаем из .env
+                    var botToken = Env.GetString("BOT_TOKEN");
                     if (string.IsNullOrEmpty(botToken))
                     {
-                        throw new Exception("❌ Ошибка: отсутствует BotToken в appsettings.json!");
+                        throw new Exception("❌ Ошибка: отсутствует BOT_TOKEN в .env файле!");
                     }
 
-                    var adminIds = configuration.GetSection("BotConfiguration:AdminIds")
-                                                .Get<long[]>()?.ToList() ?? new List<long>();
+                    var adminIds = Env.GetString("ADMIN_IDS")
+                                      ?.Split(',')
+                                      .Select(id => long.TryParse(id.Trim(), out var adminId) ? adminId : (long?)null)
+                                      .Where(id => id.HasValue)
+                                      .Select(id => id!.Value)
+                                      .ToList() ?? new List<long>();
 
-                    var dataPath = Path.Combine(GetBasePath(), "Data");
-                    var coursesFilePath = Path.Combine(dataPath, "courses.json");
-                    var paymentsFilePath = Path.Combine(dataPath, "payments.json");
+                    // Читаем пути хранения файлов из appsettings.json
+                    var coursesFilePath = Path.Combine(basePath, configuration["BotConfiguration:Storage:CoursesFilePath"]);
+                    var paymentsFilePath = Path.Combine(basePath, configuration["BotConfiguration:Storage:PaymentsFilePath"]);
 
-                    // Проверяем, существуют ли файлы
+                    // Проверяем существование файлов
                     EnsureFileExists(coursesFilePath, "[]");
                     EnsureFileExists(paymentsFilePath, "[]");
 
@@ -51,7 +73,7 @@ namespace CourseAccessBot
                     services.AddSingleton(new CourseRepository(coursesFilePath));
                     services.AddSingleton(new PaymentRepository(paymentsFilePath));
                     services.AddSingleton<ITelegramBotClient>(provider =>
-                        new Telegram.Bot.TelegramBotClient(botToken));
+                        new TelegramBotClient(botToken));
 
                     // Регистрируем Handlers
                     services.AddSingleton<UserHandlers>();
@@ -69,12 +91,12 @@ namespace CourseAccessBot
                 });
 
         /// <summary>
-        /// Определяет базовый путь (ищет `appsettings.json` на 4 уровня выше).
+        /// Определяет базовый путь (ищет `.env` и `appsettings.json` на 3 уровня выше).
         /// </summary>
         private static string GetBasePath()
         {
             string currentPath = Directory.GetCurrentDirectory();
-            for (int i = 0; i < 3; i++) // Поднимаемся на 4 уровня выше
+            for (int i = 0; i < 3; i++) // Поднимаемся на 3 уровня выше
             {
                 currentPath = Directory.GetParent(currentPath)!.FullName;
             }
@@ -86,15 +108,20 @@ namespace CourseAccessBot
         /// </summary>
         private static void EnsureFileExists(string filePath, string defaultContent)
         {
+            if (string.IsNullOrEmpty(filePath))
+            {
+                throw new Exception("❌ Ошибка: Путь к файлу данных не указан в appsettings.json!");
+            }
+
             var directory = Path.GetDirectoryName(filePath);
             if (!string.IsNullOrEmpty(directory) && !Directory.Exists(directory))
             {
-                Directory.CreateDirectory(directory); // Создаём папку, если её нет
+                Directory.CreateDirectory(directory);
             }
 
             if (!File.Exists(filePath))
             {
-                File.WriteAllText(filePath, defaultContent); // Создаём файл с дефолтным содержимым
+                File.WriteAllText(filePath, defaultContent);
                 Console.WriteLine($"✅ Создан файл: {filePath}");
             }
         }
