@@ -136,9 +136,6 @@ public class AdminHandlers
         );
     }
 
-    /// <summary>
-    /// Пошаговая обработка добавления курса.
-    /// </summary>
     private async Task HandleCourseAddingProcess(long userId, long chatId, string text)
     {
         if (!_adminStates.ContainsKey(userId)) return;
@@ -151,60 +148,58 @@ public class AdminHandlers
             case "awaiting_title":
                 courseData.Title = text;
                 _adminStates[userId] = "awaiting_description";
-
-                await _botClient.SendTextMessageAsync(
-                    chatId,
-                    "📝 Введите описание курса:"
-                );
+                await _botClient.SendTextMessageAsync(chatId, "📝 Введите описание курса:");
                 break;
 
             case "awaiting_description":
                 courseData.Description = text;
                 _adminStates[userId] = "awaiting_price";
-
-                await _botClient.SendTextMessageAsync(
-                    chatId,
-                    "💰 Введите цену курса (число в рублях):"
-                );
+                await _botClient.SendTextMessageAsync(chatId, "💰 Введите цену курса (число в рублях):");
                 break;
 
             case "awaiting_price":
                 if (!decimal.TryParse(text, out decimal price))
                 {
-                    await _botClient.SendTextMessageAsync(
-                        chatId,
-                        "❌ Некорректный формат цены. Введите число."
-                    );
+                    await _botClient.SendTextMessageAsync(chatId, "❌ Некорректный формат цены. Введите число.");
                     return;
                 }
                 courseData.Price = price;
                 _adminStates[userId] = "awaiting_link";
-
-                await _botClient.SendTextMessageAsync(
-                    chatId,
-                    "🔗 Введите ссылку на курс:"
-                );
+                await _botClient.SendTextMessageAsync(chatId, "🔗 Введите ссылку на курс:");
                 break;
 
             case "awaiting_link":
                 courseData.Link = text;
                 _courseRepo.AddCourse(courseData);
 
-                // Сбрасываем состояние
                 _adminStates.Remove(userId);
                 _newCourseData.Remove(userId);
 
-                await _botClient.SendTextMessageAsync(
-                    chatId,
-                    $"✅ *Курс успешно добавлен!*\n\n" +
-                    $"*Название:* {courseData.Title}\n" +
-                    $"*Описание:* {courseData.Description}\n" +
-                    $"*Цена:* {courseData.Price} руб.\n" +
-                    $"*Ссылка:* {courseData.Link}",
-                    parseMode: ParseMode.Markdown
-                );
+                try
+                {
+                    string messageText = $"✅ Курс успешно добавлен!\n\n" +
+                                         $"📚 *Название:* {EscapeMarkdown(courseData.Title)}\n" +
+                                         $"📝 *Описание:* {EscapeMarkdown(courseData.Description)}\n" +
+                                         $"💰 *Цена:* {courseData.Price} руб.\n" +
+                                         $"🔗 *Ссылка:* {EscapeMarkdown(courseData.Link)}";
 
-                await ShowAdminMenu(chatId);
+                    await _botClient.SendTextMessageAsync(
+                        chatId,
+                        messageText,
+                        parseMode: ParseMode.Markdown
+                    );
+
+                    // ⏪ Возвращаем в главное меню
+                    await ShowAdminMenu(chatId);
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"⚠ Ошибка отправки сообщения: {ex.Message}");
+                    await _botClient.SendTextMessageAsync(chatId, "✅ Курс успешно добавлен, но возникла ошибка при отображении данных.");
+
+                    // Все равно возвращаем в главное меню!
+                    await ShowAdminMenu(chatId);
+                }
                 break;
         }
     }
@@ -461,7 +456,7 @@ public class AdminHandlers
         }
     }
 
-  
+
 
     /// <summary>
     /// Показать все курсы (админу).
@@ -469,37 +464,61 @@ public class AdminHandlers
     private async Task ShowAllCourse(long chatId)
     {
         var courses = _courseRepo.GetAllCourses().ToList();
+
         if (!courses.Any())
         {
-            await _botClient.SendTextMessageAsync(
-                chatId,
-                "❌ Нет доступных курсов."
-            );
-            await ShowAdminMenu(chatId);
+            await _botClient.SendTextMessageAsync(chatId, "❌ Нет доступных курсов.");
+            await ShowAdminMenu(chatId); // Возврат в меню, если нет курсов
             return;
         }
 
-        // Перебираем курсы и показываем их администратору
         foreach (var course in courses)
         {
+            string messageText = $"📚 *Название:* {EscapeMarkdown(course.Title)}\n" +
+                                 $"📝 *Описание:* {EscapeMarkdown(course.Description)}\n" +
+                                 $"💰 *Цена:* {course.Price} руб.\n" +
+                                 $"🆔 *ID:* {course.Id}\n" +
+                                 $"🔗 *Ссылка:* {EscapeMarkdown(course.Link)}";
+
             await _botClient.SendTextMessageAsync(
                 chatId: chatId,
-                text:
-                    $"*Название:* {course.Title}\n" +
-                    $"*Описание:* {course.Description}\n" +
-                    $"*Цена:* {course.Price} руб.\n" +
-                    $"*ID:* {course.Id}\n" +
-                    $"*Ссылка:* {course.Link}",
+                text: messageText,
                 parseMode: ParseMode.Markdown
             );
         }
 
-        // Возвращаем в главное меню
         await _botClient.SendTextMessageAsync(
             chatId,
             "📋 Все курсы показаны. Возвращаю в главное меню...",
             replyMarkup: new ReplyKeyboardRemove()
         );
+
         await ShowAdminMenu(chatId);
+    }
+
+    // Метод для экранирования символов в Markdown-разметке Telegram
+    private static string EscapeMarkdown(string text)
+    {
+        if (string.IsNullOrEmpty(text)) return text;
+
+        return text
+            .Replace("_", "\\_")
+            .Replace("*", "\\*")
+            .Replace("[", "\\[")
+            .Replace("]", "\\]")
+            .Replace("(", "\\(")
+            .Replace(")", "\\)")
+            .Replace("~", "\\~")
+            .Replace("`", "\\`")
+            .Replace(">", "\\>")
+            .Replace("#", "\\#")
+            .Replace("+", "\\+")
+            .Replace("-", "\\-")
+            .Replace("=", "\\=")
+            .Replace("|", "\\|")
+            .Replace("{", "\\{")
+            .Replace("}", "\\}")
+            .Replace(".", "\\.")
+            .Replace("!", "\\!");
     }
 }
