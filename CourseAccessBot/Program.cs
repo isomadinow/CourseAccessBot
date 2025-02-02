@@ -12,55 +12,55 @@ namespace CourseAccessBot
     {
         public static void Main(string[] args)
         {
-            // Определяем путь к .env и appsettings.json (3 уровня вверх)
+            // Определяем окружение: Production / Development
+            string environment = Environment.GetEnvironmentVariable("DOTNET_ENVIRONMENT") ?? "Production";
+            Console.WriteLine($"🚀 Запуск в режиме: {environment}");
+
+            // Определяем базовый путь
             string basePath = GetBasePath();
 
-            // Загружаем переменные из .env
+            // Загружаем переменные из .env, если это Development
             string envFilePath = Path.Combine(basePath, ".env");
-            if (File.Exists(envFilePath))
+            if (environment == "Development" && File.Exists(envFilePath))
             {
                 Env.Load(envFilePath);
                 Console.WriteLine("✅ Загружены переменные из .env");
             }
-            else
-            {
-                throw new Exception($"❌ Ошибка: Файл .env не найден по пути {envFilePath}!");
-            }
 
             // Запускаем приложение
-            CreateHostBuilder(args, basePath).Build().Run();
+            CreateHostBuilder(args, basePath, environment).Build().Run();
         }
 
-        private static IHostBuilder CreateHostBuilder(string[] args, string basePath) =>
+        private static IHostBuilder CreateHostBuilder(string[] args, string basePath, string environment) =>
             Host.CreateDefaultBuilder(args)
                 .ConfigureAppConfiguration((hostingContext, config) =>
                 {
                     config.SetBasePath(basePath)
-                          .AddJsonFile("appsettings.json", optional: false, reloadOnChange: true)
+                          .AddJsonFile("appsettings.json", optional: true, reloadOnChange: true)
                           .AddEnvironmentVariables();
                 })
                 .ConfigureServices((hostingContext, services) =>
                 {
                     var configuration = hostingContext.Configuration;
 
-                    // Читаем токен из .env
-                    var botToken = Env.GetString("BOT_TOKEN");
+                    // Читаем BOT_TOKEN из окружения
+                    var botToken = Environment.GetEnvironmentVariable("BOT_TOKEN") ?? Env.GetString("BOT_TOKEN", "");
                     if (string.IsNullOrEmpty(botToken))
                     {
-                        throw new Exception("❌ Ошибка: отсутствует BOT_TOKEN в .env файле!");
+                        throw new Exception("❌ Ошибка: BOT_TOKEN отсутствует!");
                     }
 
-                    // Читаем список админов из .env
-                    var adminIds = Env.GetString("ADMIN_IDS")
-                                      ?.Split(',')
+                    // Читаем список админов
+                    var adminIds = (Environment.GetEnvironmentVariable("ADMIN_IDS") ?? Env.GetString("ADMIN_IDS", ""))
+                                      .Split(',')
                                       .Select(id => long.TryParse(id.Trim(), out var adminId) ? adminId : (long?)null)
                                       .Where(id => id.HasValue)
                                       .Select(id => id!.Value)
                                       .ToList() ?? new List<long>();
 
-                    // Читаем пути хранения файлов из appsettings.json
-                    var coursesFilePath = Path.Combine(basePath, configuration["BotConfiguration:Storage:CoursesFilePath"]);
-                    var paymentsFilePath = Path.Combine(basePath, configuration["BotConfiguration:Storage:PaymentsFilePath"]);
+                    // Читаем пути хранения файлов
+                    var coursesFilePath = Path.Combine(basePath, configuration["BotConfiguration:Storage:CoursesFilePath"] ?? "courses.json");
+                    var paymentsFilePath = Path.Combine(basePath, configuration["BotConfiguration:Storage:PaymentsFilePath"] ?? "payments.json");
 
                     // Проверяем существование файлов
                     EnsureFileExists(coursesFilePath, "[]");
@@ -106,21 +106,31 @@ namespace CourseAccessBot
                     services.AddHostedService<BotService>();
                 });
 
+        /// <summary>
+        /// Определяет базовый путь
+        /// </summary>
         private static string GetBasePath()
         {
             string currentPath = Directory.GetCurrentDirectory();
-            for (int i = 0; i < 3; i++)
+
+            // Проверяем, существует ли appsettings.json
+            if (File.Exists(Path.Combine(currentPath, "appsettings.json")))
             {
-                currentPath = Directory.GetParent(currentPath)!.FullName;
+                return currentPath;
             }
+
+            // В Docker остаёмся в корневой директории
             return currentPath;
         }
 
+        /// <summary>
+        /// Проверяет существование файла, если нет — создаёт с указанным содержимым.
+        /// </summary>
         private static void EnsureFileExists(string filePath, string defaultContent)
         {
             if (string.IsNullOrEmpty(filePath))
             {
-                throw new Exception("❌ Ошибка: Путь к файлу данных не указан в appsettings.json!");
+                throw new Exception("❌ Ошибка: Путь к файлу данных не указан!");
             }
 
             var directory = Path.GetDirectoryName(filePath);
