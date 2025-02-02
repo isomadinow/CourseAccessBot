@@ -15,5 +15,6 @@
         public PaymentStatus Status { get; set; } = PaymentStatus.Pending;
         public string? PhotoFileId { get; set; }  // FileId (скриншота/документа)
         public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+       public string? FileId { get; set; } // FileId (скриншота/документа)
     }
 }

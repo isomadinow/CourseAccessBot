@@ -3,10 +3,6 @@ using CourseAccessBot.Services;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
-using System;
-using System.IO;
-using System.Linq;
-using System.Collections.Generic;
 using Telegram.Bot;
 using DotNetEnv;
 
@@ -39,21 +35,22 @@ namespace CourseAccessBot
             Host.CreateDefaultBuilder(args)
                 .ConfigureAppConfiguration((hostingContext, config) =>
                 {
-                    config.SetBasePath(basePath) // Устанавливаем базовый путь
-                          .AddJsonFile("appsettings.json", optional: false, reloadOnChange: true) // Подключаем appsettings.json
+                    config.SetBasePath(basePath)
+                          .AddJsonFile("appsettings.json", optional: false, reloadOnChange: true)
                           .AddEnvironmentVariables();
                 })
                 .ConfigureServices((hostingContext, services) =>
                 {
                     var configuration = hostingContext.Configuration;
 
-                    // Читаем из .env
+                    // Читаем токен из .env
                     var botToken = Env.GetString("BOT_TOKEN");
                     if (string.IsNullOrEmpty(botToken))
                     {
                         throw new Exception("❌ Ошибка: отсутствует BOT_TOKEN в .env файле!");
                     }
 
+                    // Читаем список админов из .env
                     var adminIds = Env.GetString("ADMIN_IDS")
                                       ?.Split(',')
                                       .Select(id => long.TryParse(id.Trim(), out var adminId) ? adminId : (long?)null)
@@ -75,14 +72,33 @@ namespace CourseAccessBot
                     services.AddSingleton<ITelegramBotClient>(provider =>
                         new TelegramBotClient(botToken));
 
-                    // Регистрируем Handlers
-                    services.AddSingleton<UserHandlers>();
-                    services.AddSingleton<AdminHandlers>();
+                    // Регистрируем AdminHandlers
+                    services.AddSingleton<AdminHandlers>(provider =>
+                    {
+                        var botClient = provider.GetRequiredService<ITelegramBotClient>();
+                        var courseRepo = provider.GetRequiredService<CourseRepository>();
+                        var paymentRepo = provider.GetRequiredService<PaymentRepository>();
+
+                        return new AdminHandlers(botClient, courseRepo, paymentRepo, adminIds);
+                    });
+
+                    // Регистрируем UserHandlers
+                    services.AddSingleton<UserHandlers>(provider =>
+                    {
+                        var botClient = provider.GetRequiredService<ITelegramBotClient>();
+                        var courseRepo = provider.GetRequiredService<CourseRepository>();
+                        var paymentRepo = provider.GetRequiredService<PaymentRepository>();
+
+                        return new UserHandlers(botClient, courseRepo, paymentRepo);
+                    });
+
+                    // Регистрируем BotHandlers
                     services.AddSingleton<BotHandlers>(provider =>
                     {
                         var botClient = provider.GetRequiredService<ITelegramBotClient>();
                         var userHandlers = provider.GetRequiredService<UserHandlers>();
                         var adminHandlers = provider.GetRequiredService<AdminHandlers>();
+
                         return new BotHandlers(botClient, userHandlers, adminHandlers, adminIds);
                     });
 
@@ -90,22 +106,16 @@ namespace CourseAccessBot
                     services.AddHostedService<BotService>();
                 });
 
-        /// <summary>
-        /// Определяет базовый путь (ищет `.env` и `appsettings.json` на 3 уровня выше).
-        /// </summary>
         private static string GetBasePath()
         {
             string currentPath = Directory.GetCurrentDirectory();
-            for (int i = 0; i < 3; i++) // Поднимаемся на 3 уровня выше
+            for (int i = 0; i < 3; i++)
             {
                 currentPath = Directory.GetParent(currentPath)!.FullName;
             }
             return currentPath;
         }
 
-        /// <summary>
-        /// Проверяет существование файла, если нет — создаёт с указанным содержимым.
-        /// </summary>
         private static void EnsureFileExists(string filePath, string defaultContent)
         {
             if (string.IsNullOrEmpty(filePath))

@@ -3,7 +3,7 @@ FROM mcr.microsoft.com/dotnet/sdk:8.0 AS build
 WORKDIR /app
 
 # Копируем csproj и восстанавливаем зависимости
-COPY TelegramPaymentBot.csproj .
+COPY CourseAccessBot.csproj .
 RUN dotnet restore
 
 # Копируем остальные файлы и собираем проект
